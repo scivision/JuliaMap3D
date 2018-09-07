@@ -1,0 +1,16 @@
+language: julia
+group: travis_latest
+
+git:
+  depth: 3
+  quiet: true
+
+julia:
+- 1.0
+
+os:
+- linux
+
+script:
+- julia ecef.jl
+
