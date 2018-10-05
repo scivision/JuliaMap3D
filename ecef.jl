@@ -7,7 +7,7 @@ struct Ellipsoid
     b::Float64  # semi-minor axis [m]
 end
 
-function ecef2geodetic(x, y, z, ell::Ellipsoid)
+function ecef2geodetic(x::Real, y::Real, z::Real, ell::Ellipsoid)
     #=
     convert ECEF (meters) to geodetic coordinates
 
@@ -21,51 +21,46 @@ function ecef2geodetic(x, y, z, ell::Ellipsoid)
     lat,lon   (degrees/radians)
     alt  (meters)
 
-    Algorithm is based on
-    http://www.astro.uni.torun.pl/~kb/Papers/geod/Geod-BG.htm
-    This algorithm provides a converging solution to the latitude equation
-    in terms of the parametric or reduced latitude form (v)
-    This algorithm provides a uniform solution over all latitudes as it does
-    not involve division by cos(phi) or sin(phi)
+    based on:
+    You, Rey-Jer. (2000). Transformation of Cartesian to Geodetic Coordinates without Iterations.
+    Journal of Surveying Engineering. doi: 10.1061/(ASCE)0733-9453
     =#
 
-    ea = ell.a
-    eb = ell.b
-    rad = hypot(x, y)
-# Constant required for Latitude equation
-    rho = atan(eb * z, ea * rad)
-# Constant required for latitude equation
-    c = (ea^2 - eb^2) / hypot(ea * rad, eb * z)
-# Starter for the Newtons Iteration Method
-    vnew = atan(ea * z, eb * rad)
-# Initializing the parametric latitude
-    v = 0
-    for i = 1:5
-        v = deepcopy(vnew)
-# %% Newtons Method for computing iterations
-        vnew = v - ((2 * sin(v - rho) - c * sin(2 * v)) /
-                    (2 * (cos(v - rho) - c * cos(2 * v))))
+    r = sqrt(x^2 + y^2 + z^2)
 
-        if all(v ≈ vnew)
-            break
-        end
-    end
-# %% Computing latitude from the root of the latitude equation
-    lat = atan(ea * tan(vnew), eb)
-    # by inspection
+    E = sqrt(ell.a^2 - ell.b^2)
+
+    # eqn. 4a
+    u = sqrt(0.5 * (r^2 - E^2) + 0.5 * sqrt((r^2 - E^2)^2 + 4 * E^2 * z^2))
+
+    Q = hypot(x, y)
+
+    huE = hypot(u, E)
+
+    # eqn. 4b
+    Beta = atan(huE / u * z / hypot(x, y))
+
+    # eqn. 13
+    eps = ((ell.b * u - ell.a * huE + E^2) * sin(Beta)) / (ell.a * huE * 1 / cos(Beta) - E^2 * cos(Beta))
+
+    Beta += eps
+# %% final output
+    lat = atan(ell.a / ell.b * tan(Beta))
+
     lon = atan(y, x)
 
-    alt = (((rad - ea * cos(vnew)) * cos(lat)) +
-           ((z - eb * sin(vnew)) * sin(lat)))
+    # eqn. 7
+    alt = sqrt((z - ell.b * sin(Beta))^2 + (Q - ell.a * cos(Beta))^2)
+
 
     lat > -pi / 2 && lat < pi / 2 || throw(DomainError("-90 <= lat <= 90"))
     lon > -pi && lon < 2 * pi || throw(DomainError("-180 <= lat <= 360"))
 
-    return [rad2deg(lat), rad2deg(lon), alt]
+    return (rad2deg(lat), rad2deg(lon), alt)
 
 end
 
-function geodetic2ecef(lat, lon, alt, ell::Ellipsoid)
+function geodetic2ecef(lat::Real, lon::Real, alt::Real, ell::Ellipsoid)
     #=
     Point
     input:
@@ -93,8 +88,25 @@ function geodetic2ecef(lat, lon, alt, ell::Ellipsoid)
     y = (N + alt) * cos(lat) * sin(lon)
     z = (N * (ell.b / ell.a)^2 + alt) * sin(lat)
 
-    return [x, y, z]
+    return (x, y, z)
 end
+
+
+function enu2uvw(east::Real, north::Real, up::Real,
+                 lat0::Real, lon0::Real)
+
+    lat0 = deg2rad(lat0)
+    lon0 = deg2rad(lon0)
+
+    t = cos(lat0) * up - sin(lat0) * north
+    w = sin(lat0) * up + cos(lat0) * north
+
+    u = cos(lon0) * t - sin(lon0) * east
+    v = sin(lon0) * t + cos(lon0) * east
+
+    return (u, v, w)
+end
+
 
 function get_radius_normal(lat_radians, ell)
     # Compute normal radius of planetary body
@@ -106,14 +118,25 @@ function get_radius_normal(lat_radians, ell)
 end
 
 
-if PROGRAM_FILE == splitdir(@__FILE__)[end]
-  lla0 = [42., -82., 200.]
-  ell = Ellipsoid(6378137., 1 / 298.2572235630, 6378137. * (1 - 1 / 298.2572235630))
-  xyz0 = geodetic2ecef(lla0..., ell)
+if basename(PROGRAM_FILE) == basename(@__FILE__)
+
+  if length(ARGS) == 3
   
-  @test isapprox(xyz0,[660.6753e3,-4700.9487e3,4245.738e3], rtol=1e-4)
-  
-  lla1 = ecef2geodetic(xyz0..., ell)
-  @test isapprox(lla1, lla0)
-  
+  else
+    lla0 = (42., -82., 200.)
+    ell = Ellipsoid(6378137., 1 / 298.2572235630, 6378137. * (1 - 1 / 298.2572235630))
+    
+    x, y, z = geodetic2ecef(lla0..., ell)
+    
+    @test isapprox(x, 660675.2518247)
+    @test isapprox(y, -4700948.68316)
+    @test isapprox(z, 4245737.66222)
+    
+    lat1, lon1, alt1 = ecef2geodetic(x,y,z, ell)
+    
+    @test isapprox(lat1, lla0[1])
+    @test isapprox(lon1, lla0[2])
+    @test isapprox(alt1, lla0[3])
+    
+  end
 end

@@ -13,4 +13,5 @@ os:
 
 script:
 - julia ecef.jl
-
+- julia enu.jl
+- julia aer.jl
